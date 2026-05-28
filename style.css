@@ -1,0 +1,71 @@
+#empty_reply_regenerator_settings .empty-reply-regenerator-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+#empty_reply_regenerator_settings .inline-drawer-content,
+#empty_reply_regenerator_settings .checkbox_label,
+#empty_reply_regenerator_settings .empty-reply-regenerator-row label {
+    font-size: inherit;
+    line-height: 1.4;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-enabled {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.5rem;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-enabled input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    place-self: center;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-enabled span {
+    min-width: 0;
+    line-height: 1.4;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-number {
+    width: 4.5rem;
+    flex: 0 0 auto;
+    text-align: center;
+}
+
+@media (max-width: 600px) {
+    #empty_reply_regenerator_settings .empty-reply-regenerator-row {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+
+    #empty_reply_regenerator_settings .empty-reply-regenerator-number {
+        width: 100%;
+        max-width: 8rem;
+    }
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-status {
+    opacity: 0.8;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-status:empty {
+    display: none;
+}
+
+.empty-reply-regenerator-retry-counter {
+    cursor: default;
+    opacity: 0.85;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+}

@@ -1,0 +1,11 @@
+{
+    "display_name": "空回自动重生成",
+    "loading_order": 1002,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "local",
+    "version": "0.1.0",
+    "description": "在 AI 回复已结束且正文为空时，自动触发重新生成。"
+}
