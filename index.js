@@ -53,6 +53,9 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let lastHandledEmptyKey = '';
     let generationStartChatLength = 0;
     let generationStartLastMessageKey = '';
+    let generationStartLastMessageWasUser = false;
+    let generationStartType = null;
+    let generationStartedAt = 0;
     let generationRequestSubmitted = false;
     let generationRequestId = 0;
     let toastLogEntries = [];
@@ -193,6 +196,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     }
 
     function getReplyText(message) {
+        // 空回只按聊天数据里的原始正文判断；不要读 DOM，也不要读正则处理后的显示结果。
         return String(message?.mes ?? '').replace(blankCharacters, '').trim();
     }
 
@@ -232,6 +236,11 @@ import { is_group_generating } from '/scripts/group-chats.js';
             return false;
         }
 
+        if (!generationStartLastMessageWasUser && generationStartType !== 'regenerate') {
+            // 避免把生图、静默生成或其他插件触发的“聊天未变化”误当成空回。
+            return false;
+        }
+
         return chat.length === generationStartChatLength
             && getCurrentLastMessageKey() === generationStartLastMessageKey;
     }
@@ -258,15 +267,33 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return activeGenerationType === null || eligibleGenerationTypes.has(activeGenerationType);
     }
 
+    function clearGenerationCheckpoint() {
+        activeGenerationType = null;
+        generationStartChatLength = 0;
+        generationStartLastMessageKey = '';
+        generationStartLastMessageWasUser = false;
+        generationStartType = null;
+        generationStartedAt = 0;
+        generationRequestSubmitted = false;
+        clearToastRetryChecks();
+    }
+
     function markGenerationCheckpointFromCurrentChat() {
+        const lastMessage = chat[chat.length - 1];
         generationRequestSubmitted = true;
         generationRequestId += 1;
         generationStartChatLength = chat.length;
         generationStartLastMessageKey = getCurrentLastMessageKey();
+        generationStartLastMessageWasUser = !!lastMessage?.is_user;
+        generationStartType = activeGenerationType;
     }
 
     function markToastFailureCheckpointIfNeeded() {
         if (generationRequestSubmitted || generationStopped || activeGenerationType === null || !shouldCheckGenerationType()) {
+            return;
+        }
+
+        if (!generationStartedAt || Date.now() - generationStartedAt > 120000) {
             return;
         }
 
@@ -867,6 +894,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
         if (!shouldCheckGenerationType()) {
             setLastStatus('本次生成类型不处理，未重试');
+            clearGenerationCheckpoint();
             return;
         }
 
@@ -878,7 +906,16 @@ import { is_group_generating } from '/scripts/group-chats.js';
             const recorded = await recordRetryCountOnFinalReply(messageIndex, lastMessage);
             if (!recorded) {
                 if (isCompletedAiReply(lastMessage)) {
-                    setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
+                    if (generationRequestSubmitted
+                        && chat.length === generationStartChatLength
+                        && getCurrentLastMessageKey() === generationStartLastMessageKey
+                        && !generationStartLastMessageWasUser
+                        && generationStartType !== 'regenerate') {
+                        setLastStatus('本次没有新的聊天回复变化，未重试');
+                    } else {
+                        setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
+                    }
+                    clearGenerationCheckpoint();
                 } else if (lastMessage?.is_user) {
                     setLastStatus('最后一楼仍是用户消息，但本轮未确认发出请求，未重试');
                 } else {
@@ -949,6 +986,9 @@ import { is_group_generating } from '/scripts/group-chats.js';
         lastHandledEmptyKey = '';
         generationStartChatLength = 0;
         generationStartLastMessageKey = '';
+        generationStartLastMessageWasUser = false;
+        generationStartType = null;
+        generationStartedAt = 0;
         generationRequestSubmitted = false;
         generationRequestId = 0;
 
@@ -965,12 +1005,19 @@ import { is_group_generating } from '/scripts/group-chats.js';
         clearToastRetryChecks();
     }
 
-    function onGenerationStarted(type) {
+    function onGenerationStarted(type, _params, dryRun) {
+        if (dryRun) {
+            return;
+        }
+
         activeGenerationType = type || 'normal';
         generationStopped = false;
         generationRequestSubmitted = false;
         generationStartChatLength = 0;
         generationStartLastMessageKey = '';
+        generationStartLastMessageWasUser = false;
+        generationStartType = null;
+        generationStartedAt = Date.now();
 
         if (pendingAutoRetry) {
             pendingAutoRetry = false;
@@ -985,7 +1032,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationRequestId = 0;
         lastHandledEmptyKey = '';
         setStatus('');
-        setLastStatus('生成开始，等待结束后检查');
+        setLastStatus('');
     }
 
     function onGenerateAfterData(_data, dryRun) {
@@ -994,6 +1041,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         markGenerationCheckpointFromCurrentChat();
+        setLastStatus('文本生成已提交，等待结束后检查');
     }
 
     function injectSettingsPanel() {
