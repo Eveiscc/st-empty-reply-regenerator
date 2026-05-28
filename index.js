@@ -841,17 +841,25 @@ import { is_group_generating } from '/scripts/group-chats.js';
         const messageElement = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
         const target = messageElement ? getRetryCounterTarget(messageElement) : null;
 
-        if (!messageElement || !target) {
+        if (!messageElement) {
             return;
         }
 
-        let counter = messageElement.querySelector(`.${retryCounterClass}`);
+        let counter = null;
         const count = getStoredRetryCount(message);
 
-        if (!count) {
+        if (!count || !target) {
             messageElement.querySelectorAll(`.${retryCounterClass}`).forEach(element => element.remove());
             return;
         }
+
+        const staleCounters = Array.from(messageElement.querySelectorAll(`.${retryCounterClass}`));
+        staleCounters.forEach(element => {
+            if (element.parentElement !== target.container) {
+                element.remove();
+            }
+        });
+        counter = messageElement.querySelector(`.${retryCounterClass}`);
 
         if (counter?.parentElement !== target.container) {
             counter?.remove();
