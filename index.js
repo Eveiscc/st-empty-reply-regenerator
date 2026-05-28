@@ -29,6 +29,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     const maxToastLogEntries = 3;
     const toastRetryCheckDelays = Object.freeze([700, 1800]);
     const foregroundRetryCheckDelays = Object.freeze([300, 1500, 4000]);
+    const noNewReplyRetryMinDelay = 1500;
     const imageAssistClickableSelector = 'button, .menu_button, [role="button"], input[type="button"], input[type="submit"], a';
     const imageAssistMediaSelector = '.mes_text img, .mes_text video, .mes_text canvas, .mes_text picture';
     const imageAssistRetryCheckInterval = 2000;
@@ -57,6 +58,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let generationStartLastMessageWasUser = false;
     let generationStartType = null;
     let generationStartedAt = 0;
+    let generationCheckpointAt = 0;
     let generationRequestSubmitted = false;
     let generationRequestId = 0;
     let toastLogEntries = [];
@@ -199,7 +201,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
     function getReplyText(message) {
         // 空回只按聊天数据里的原始正文判断；不要读 DOM，也不要读正则处理后的显示结果。
-        return String(message?.mes ?? '').replace(blankCharacters, '').trim();
+        const text = String(message?.mes ?? '').replace(blankCharacters, '').trim();
+        return text === '...' ? '' : text;
     }
 
     function getReplyLength(message) {
@@ -229,26 +232,74 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return !!message && !message.is_user && !message.is_system && !!message.gen_finished;
     }
 
-    function isEligibleEmptyReply(message) {
-        return isCompletedAiReply(message) && getReplyText(message).length === 0;
+    function isAiReply(message) {
+        return !!message && !message.is_user && !message.is_system;
     }
 
-    function hasNoGeneratedReplyChange() {
+    function isCurrentGenerationMessage(messageIndex) {
+        return generationRequestSubmitted
+            && Number.isInteger(messageIndex)
+            && generationStartChatLength > 0
+            && messageIndex >= generationStartChatLength;
+    }
+
+    function isEligibleEmptyReply(messageIndex, message) {
+        return isCurrentGenerationMessage(messageIndex)
+            && isAiReply(message)
+            && getReplyText(message).length === 0;
+    }
+
+    function getCurrentGenerationAiMessages() {
+        if (!generationRequestSubmitted || generationStartChatLength <= 0) {
+            return [];
+        }
+
+        return chat
+            .slice(generationStartChatLength)
+            .filter(isAiReply);
+    }
+
+    function hasCurrentGenerationReplyText() {
+        return getCurrentGenerationAiMessages()
+            .some(message => getReplyText(message).length > 0);
+    }
+
+    function isNoGeneratedReplyBaseCandidate() {
         if (!generationRequestSubmitted || chat.length <= 0 || generationStartChatLength <= 0) {
             return false;
         }
 
-        if (!generationStartLastMessageWasUser && generationStartType !== 'regenerate') {
-            // 避免把生图、静默生成或其他插件触发的“聊天未变化”误当成空回。
+        if (chat.length !== generationStartChatLength || getCurrentLastMessageKey() !== generationStartLastMessageKey) {
             return false;
         }
 
-        return chat.length === generationStartChatLength
-            && getCurrentLastMessageKey() === generationStartLastMessageKey;
+        const lastMessage = chat[chat.length - 1];
+        if (generationStartLastMessageWasUser && lastMessage?.is_user) {
+            return true;
+        }
+
+        return generationStartType === 'regenerate' && isAiReply(lastMessage);
+    }
+
+    function getNoGeneratedReplyRetryDelay() {
+        if (!isNoGeneratedReplyBaseCandidate()) {
+            return null;
+        }
+
+        return Math.max(0, noNewReplyRetryMinDelay - (Date.now() - generationCheckpointAt));
+    }
+
+    function hasNoGeneratedReplyChange() {
+        const retryDelay = getNoGeneratedReplyRetryDelay();
+        return retryDelay !== null && retryDelay === 0;
     }
 
     function getEmptyReplyCandidate(messageIndex, message) {
-        if (isEligibleEmptyReply(message)) {
+        if (hasCurrentGenerationReplyText()) {
+            return null;
+        }
+
+        if (isEligibleEmptyReply(messageIndex, message)) {
             return {
                 key: getMessageKey(messageIndex, message),
                 label: `${formatMessageIndex(messageIndex)}正文为空`,
@@ -258,7 +309,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         if (hasNoGeneratedReplyChange()) {
             return {
                 key: `no-ai-reply|${generationRequestId}|${generationStartLastMessageKey}`,
-                label: '本轮没有生成新的 AI 回复',
+                label: '本轮没有创建新的 AI 回复',
             };
         }
 
@@ -270,7 +321,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     }
 
     function hasTrackedTextGeneration() {
-        return generationRequestSubmitted || activeGenerationType !== null;
+        return generationRequestSubmitted;
     }
 
     function clearGenerationCheckpoint() {
@@ -280,6 +331,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = 0;
+        generationCheckpointAt = 0;
         generationRequestSubmitted = false;
         clearToastRetryChecks();
     }
@@ -292,6 +344,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageKey = getCurrentLastMessageKey();
         generationStartLastMessageWasUser = !!lastMessage?.is_user;
         generationStartType = activeGenerationType;
+        generationCheckpointAt = Date.now();
     }
 
     function markToastFailureCheckpointIfNeeded() {
@@ -907,6 +960,17 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }, 300);
     }
 
+    function scheduleDelayedEmptyReplyCheck(reason, delay) {
+        if (scheduledCheck) {
+            clearTimeout(scheduledCheck);
+        }
+
+        scheduledCheck = setTimeout(() => {
+            scheduledCheck = null;
+            void checkForEmptyReply(reason);
+        }, Math.max(0, delay));
+    }
+
     function scheduleImmediateEmptyReplyCheck(reason) {
         Promise.resolve().then(() => checkForEmptyReply(reason));
     }
@@ -938,6 +1002,13 @@ import { is_group_generating } from '/scripts/group-chats.js';
             return;
         }
 
+        const noGeneratedReplyRetryDelay = getNoGeneratedReplyRetryDelay();
+        if (noGeneratedReplyRetryDelay > 0) {
+            setLastStatus(`本轮暂未产生新 AI 回复，等待 ${formatDelay(noGeneratedReplyRetryDelay)} 后确认是否需要重试`);
+            scheduleDelayedEmptyReplyCheck('no_ai_reply_confirm', noGeneratedReplyRetryDelay + 50);
+            return;
+        }
+
         const messageIndex = chat.length - 1;
         const lastMessage = chat[messageIndex];
         const emptyCandidate = getEmptyReplyCandidate(messageIndex, lastMessage);
@@ -946,18 +1017,13 @@ import { is_group_generating } from '/scripts/group-chats.js';
             const recorded = await recordRetryCountOnFinalReply(messageIndex, lastMessage);
             if (!recorded) {
                 if (isCompletedAiReply(lastMessage)) {
-                    if (generationRequestSubmitted
-                        && chat.length === generationStartChatLength
-                        && getCurrentLastMessageKey() === generationStartLastMessageKey
-                        && !generationStartLastMessageWasUser
-                        && generationStartType !== 'regenerate') {
-                        setLastStatus('本次没有新的聊天回复变化，未重试');
-                    } else {
-                        setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
-                    }
+                    setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
+                    clearGenerationCheckpoint();
+                } else if (hasCurrentGenerationReplyText()) {
+                    setLastStatus('本轮已有原始正文内容，未重试');
                     clearGenerationCheckpoint();
                 } else if (lastMessage?.is_user) {
-                    setLastStatus('最后一楼仍是用户消息，但本轮未确认发出请求，未重试');
+                    setLastStatus('最后一楼仍是用户消息，未重试');
                 } else {
                     setLastStatus('最后一楼不是已完成 AI 回复，未重试');
                 }
@@ -1029,6 +1095,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = 0;
+        generationCheckpointAt = 0;
         generationRequestSubmitted = false;
         generationRequestId = 0;
 
@@ -1059,6 +1126,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = Date.now();
+        generationCheckpointAt = 0;
 
         if (pendingAutoRetry) {
             pendingAutoRetry = false;
@@ -1111,7 +1179,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
                         <div class="empty-reply-regenerator-content">
                             <label class="checkbox_label empty-reply-regenerator-enabled" for="${enabledInputId}">
                                 <input id="${enabledInputId}" type="checkbox">
-                                <span>检测到空回时自动重新生成（生成结束后检查正文为空或无新回复）</span>
+                                <span>检测到空回时自动重新生成（生成结束后检查正文为空或未创建新 AI 回复）</span>
                             </label>
                             <div class="empty-reply-regenerator-row">
                                 <label for="${maxRetriesInputId}">每轮最大重试次数</label>
@@ -1217,7 +1285,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
             setLastStatus('本轮已手动停止，未重试');
         });
         eventSource.on(event_types.GENERATION_ENDED, () => {
-            scheduleImmediateEmptyReplyCheck('generation_ended');
             scheduleEmptyReplyCheck('generation_ended');
         });
         eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId, type) => {
