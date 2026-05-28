@@ -28,6 +28,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     const metadataTextPattern = /字数\s*\S+[\s|｜]*更新于/;
     const maxToastLogEntries = 3;
     const toastRetryCheckDelays = Object.freeze([700, 1800]);
+    const foregroundRetryCheckDelays = Object.freeze([300, 1500, 4000]);
     const imageAssistClickableSelector = 'button, .menu_button, [role="button"], input[type="button"], input[type="submit"], a';
     const imageAssistMediaSelector = '.mes_text img, .mes_text video, .mes_text canvas, .mes_text picture';
     const imageAssistRetryCheckInterval = 2000;
@@ -63,6 +64,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let toastBodyObserver = null;
     let observedToastContainer = null;
     let toastRetryCheckTimers = [];
+    let foregroundRetryCheckTimers = [];
     let imageAssistSession = null;
     let imageAssistRetryTimer = null;
     let imageAssistObserver = null;
@@ -267,6 +269,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return activeGenerationType === null || eligibleGenerationTypes.has(activeGenerationType);
     }
 
+    function hasTrackedTextGeneration() {
+        return generationRequestSubmitted || activeGenerationType !== null;
+    }
+
     function clearGenerationCheckpoint() {
         activeGenerationType = null;
         generationStartChatLength = 0;
@@ -308,6 +314,11 @@ import { is_group_generating } from '/scripts/group-chats.js';
         toastRetryCheckTimers = [];
     }
 
+    function clearForegroundRetryChecks() {
+        foregroundRetryCheckTimers.forEach(timer => clearTimeout(timer));
+        foregroundRetryCheckTimers = [];
+    }
+
     function scheduleToastRetryChecks() {
         if (!getSettings().enabled || generationStopped || !generationRequestSubmitted) {
             return;
@@ -343,11 +354,21 @@ import { is_group_generating } from '/scripts/group-chats.js';
         renderToastLog();
         handleImageAssistToast(kind, text);
         markToastFailureCheckpointIfNeeded();
+        scheduleImmediateEmptyReplyCheck('toast_error');
         scheduleToastRetryChecks();
     }
 
+    function recordExistingToastElements(container) {
+        Array.from(container.children).forEach(recordToastElement);
+    }
+
     function observeToastContainer(container) {
-        if (!(container instanceof HTMLElement) || observedToastContainer === container) {
+        if (!(container instanceof HTMLElement)) {
+            return;
+        }
+
+        recordExistingToastElements(container);
+        if (observedToastContainer === container) {
             return;
         }
 
@@ -356,7 +377,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         observedToastContainer = container;
-        Array.from(container.children).forEach(recordToastElement);
         toastContainerObserver = new MutationObserver(mutations => {
             mutations.forEach(mutation => {
                 mutation.addedNodes.forEach(node => {
@@ -389,6 +409,37 @@ import { is_group_generating } from '/scripts/group-chats.js';
             });
         });
         toastBodyObserver.observe(document.body, { childList: true });
+    }
+
+    function shouldRunForegroundEmptyReplyCheck() {
+        return getSettings().enabled
+            && !generationStopped
+            && generationRequestSubmitted
+            && shouldCheckGenerationType();
+    }
+
+    function scheduleForegroundRecoveryChecks(reason) {
+        if (document.visibilityState === 'hidden') {
+            return;
+        }
+
+        initToastObserver();
+
+        if (shouldRunForegroundEmptyReplyCheck()) {
+            clearForegroundRetryChecks();
+            foregroundRetryCheckTimers = foregroundRetryCheckDelays.map(delay => setTimeout(() => {
+                scheduleEmptyReplyCheck(reason);
+            }, delay));
+        }
+
+        const imageSession = imageAssistSession;
+        if (imageSession && getSettings().imageAssistEnabled && !finishImageAssistIfSucceeded() && imageAssistSession === imageSession && imageSession.lastErrorText) {
+            scheduleImageAssistRetryCheck(300);
+        }
+    }
+
+    function handleForegroundResume() {
+        scheduleForegroundRecoveryChecks('foreground_resume');
     }
 
     function pruneRetryRequestTimestamps(now = Date.now()) {
@@ -770,20 +821,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
             };
         }
 
-        const headerContainer = messageElement.querySelector('.mes_block .ch_name .alignItemsBaseline')
-            || messageElement.querySelector('.mes_block .ch_name');
-
-        if (isVisibleElement(headerContainer)) {
-            return {
-                container: headerContainer,
-                anchor: headerContainer.querySelector('.timestamp')
-                    || headerContainer.querySelector('.name_text')
-                    || headerContainer.lastElementChild,
-                locationClass: 'empty-reply-regenerator-retry-counter--header',
-                getText: count => `空回重试 ${count} 次`,
-            };
-        }
-
         const avatarContainer = messageElement.querySelector('.mesAvatarWrapper');
         if (isVisibleElement(avatarContainer)) {
             return {
@@ -792,7 +829,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
                     || avatarContainer.querySelector('.mes_timer')
                     || avatarContainer.lastElementChild,
                 locationClass: 'empty-reply-regenerator-retry-counter--avatar',
-                getText: count => `空回重试 ${count} 次`,
+                getText: count => ` | 重试 ${count} 次`,
             };
         }
 
@@ -875,6 +912,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }, 300);
     }
 
+    function scheduleImmediateEmptyReplyCheck(reason) {
+        Promise.resolve().then(() => checkForEmptyReply(reason));
+    }
+
     async function checkForEmptyReply(reason) {
         const settings = getSettings();
         if (!settings.enabled) {
@@ -895,6 +936,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
         if (!shouldCheckGenerationType()) {
             setLastStatus('本次生成类型不处理，未重试');
             clearGenerationCheckpoint();
+            return;
+        }
+
+        if (!hasTrackedTextGeneration()) {
             return;
         }
 
@@ -1003,6 +1048,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         clearToastRetryChecks();
+        clearForegroundRetryChecks();
     }
 
     function onGenerationStarted(type, _params, dryRun) {
@@ -1160,6 +1206,13 @@ import { is_group_generating } from '/scripts/group-chats.js';
         initToastObserver();
         renderAllRetryCounters();
         document.addEventListener('click', handleImageAssistUserClick, true);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                handleForegroundResume();
+            }
+        });
+        window.addEventListener('focus', handleForegroundResume);
+        window.addEventListener('pageshow', handleForegroundResume);
 
         eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
         eventSource.on(event_types.GENERATE_AFTER_DATA, onGenerateAfterData);
@@ -1168,7 +1221,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
             pendingAutoRetry = false;
             setLastStatus('本轮已手动停止，未重试');
         });
-        eventSource.on(event_types.GENERATION_ENDED, () => scheduleEmptyReplyCheck('generation_ended'));
+        eventSource.on(event_types.GENERATION_ENDED, () => {
+            scheduleImmediateEmptyReplyCheck('generation_ended');
+            scheduleEmptyReplyCheck('generation_ended');
+        });
         eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId, type) => {
             if (type) {
                 activeGenerationType = type;

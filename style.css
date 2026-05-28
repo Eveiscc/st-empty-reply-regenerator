@@ -115,13 +115,12 @@
     opacity: 1;
 }
 
-.empty-reply-regenerator-retry-counter--header {
+.empty-reply-regenerator-retry-counter--avatar {
     display: inline-flex;
     align-items: baseline;
-    margin-left: 0.5em;
-}
-
-.empty-reply-regenerator-retry-counter--avatar {
-    display: block;
-    text-align: center;
+    margin-left: 3px;
+    margin-bottom: 5px;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    font-weight: normal;
+    opacity: 1;
 }
