@@ -1,11 +1,11 @@
 {
-    "display_name": "空回自动重生成",
+    "display_name": "PVP高手",
     "loading_order": 1002,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "local",
-    "version": "0.1.0",
-    "description": "在 AI 回复已结束且正文为空时，自动触发重新生成。"
+    "version": "0.1.7",
+    "description": "在 AI 回复已结束且正文为空，或请求结束后没有生成新的 AI 回复时自动触发重新生成；也可在用户手动点击生成图片后协助补点，并记录最近的错误弹窗。"
 }

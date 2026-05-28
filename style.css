@@ -3,12 +3,22 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    margin-top: 0.5rem;
+    margin-top: 0;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
 }
 
 #empty_reply_regenerator_settings .inline-drawer-content,
 #empty_reply_regenerator_settings .checkbox_label,
-#empty_reply_regenerator_settings .empty-reply-regenerator-row label {
+#empty_reply_regenerator_settings .empty-reply-regenerator-row label,
+#empty_reply_regenerator_settings .empty-reply-regenerator-status,
+#empty_reply_regenerator_settings .empty-reply-regenerator-last-status,
+#empty_reply_regenerator_settings .empty-reply-regenerator-image-status,
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
     font-size: inherit;
     line-height: 1.4;
 }
@@ -32,6 +42,10 @@
     line-height: 1.4;
 }
 
+#empty_reply_regenerator_settings .empty-reply-regenerator-row label {
+    min-width: 0;
+}
+
 #empty_reply_regenerator_settings .empty-reply-regenerator-number {
     width: 4.5rem;
     flex: 0 0 auto;
@@ -53,11 +67,26 @@
 
 #empty_reply_regenerator_settings .empty-reply-regenerator-status {
     opacity: 0.8;
-    margin-top: 0.5rem;
+    margin-top: 0;
     min-height: 1.2em;
 }
 
-#empty_reply_regenerator_settings .empty-reply-regenerator-status:empty {
+#empty_reply_regenerator_settings .empty-reply-regenerator-last-status,
+#empty_reply_regenerator_settings .empty-reply-regenerator-image-status,
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
+    opacity: 0.75;
+    margin-top: 0;
+    overflow-wrap: anywhere;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
+    white-space: pre-wrap;
+}
+
+#empty_reply_regenerator_settings .empty-reply-regenerator-status:empty,
+#empty_reply_regenerator_settings .empty-reply-regenerator-last-status:empty,
+#empty_reply_regenerator_settings .empty-reply-regenerator-image-status:empty,
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log:empty {
     display: none;
 }
 
@@ -66,6 +95,33 @@
     opacity: 0.85;
     font-size: calc(var(--mainFontSize) * 0.9);
     font-weight: 600;
-    text-align: center;
     white-space: nowrap;
+}
+
+.empty-reply-regenerator-retry-counter--assistant-meta {
+    display: inline;
+    font: inherit;
+    font-weight: inherit;
+    opacity: inherit;
+}
+
+.empty-reply-regenerator-retry-counter--avatar-meta {
+    display: inline-flex;
+    align-items: baseline;
+    margin-left: 3px;
+    margin-bottom: 5px;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    font-weight: normal;
+    opacity: 1;
+}
+
+.empty-reply-regenerator-retry-counter--header {
+    display: inline-flex;
+    align-items: baseline;
+    margin-left: 0.5em;
+}
+
+.empty-reply-regenerator-retry-counter--avatar {
+    display: block;
+    text-align: center;
 }
