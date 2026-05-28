@@ -790,16 +790,15 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
     function getAvatarMetadataTarget(messageElement) {
         const avatarContainer = messageElement.querySelector('.mesAvatarWrapper');
-        const tokenCounter = avatarContainer?.querySelector('.tokenCounterDisplay');
         const timer = avatarContainer?.querySelector('.mes_timer');
 
-        if (!isVisibleElement(avatarContainer) || !isVisibleElement(tokenCounter) || !isVisibleElement(timer)) {
+        if (!isVisibleElement(avatarContainer) || !isVisibleElement(timer)) {
             return null;
         }
 
         return {
-            container: avatarContainer,
-            anchor: timer,
+            container: timer,
+            anchor: null,
             locationClass: 'empty-reply-regenerator-retry-counter--avatar-meta',
             getText: count => ` | 重试 ${count} 次`,
         };
@@ -817,18 +816,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
                 container: assistantMetadataElement,
                 anchor: assistantMetadataElement.lastElementChild,
                 locationClass: 'empty-reply-regenerator-retry-counter--assistant-meta',
-                getText: count => ` | 重试 ${count} 次`,
-            };
-        }
-
-        const avatarContainer = messageElement.querySelector('.mesAvatarWrapper');
-        if (isVisibleElement(avatarContainer)) {
-            return {
-                container: avatarContainer,
-                anchor: avatarContainer.querySelector('.tokenCounterDisplay')
-                    || avatarContainer.querySelector('.mes_timer')
-                    || avatarContainer.lastElementChild,
-                locationClass: 'empty-reply-regenerator-retry-counter--avatar',
                 getText: count => ` | 重试 ${count} 次`,
             };
         }

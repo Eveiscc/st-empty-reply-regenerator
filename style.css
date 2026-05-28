@@ -115,12 +115,3 @@
     opacity: 1;
 }
 
-.empty-reply-regenerator-retry-counter--avatar {
-    display: inline-flex;
-    align-items: baseline;
-    margin-left: 3px;
-    margin-bottom: 5px;
-    font-size: calc(var(--mainFontSize) * 0.9);
-    font-weight: normal;
-    opacity: 1;
-}
