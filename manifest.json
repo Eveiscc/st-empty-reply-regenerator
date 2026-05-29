@@ -6,6 +6,6 @@
     "js": "index.js",
     "css": "style.css",
     "author": "local",
-    "version": "0.1.19",
+    "version": "0.1.21",
     "description": "在 AI 回复已结束且正文为空，或请求结束后未创建新的 AI 回复时自动触发重新生成；也可在用户手动点击生成图片后协助补点，并记录最近的错误弹窗。"
 }

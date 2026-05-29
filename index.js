@@ -24,9 +24,11 @@ import { is_group_generating } from '/scripts/group-chats.js';
     const lastStatusId = `${extensionKey}_last_status`;
     const imageStatusId = `${extensionKey}_image_status`;
     const toastLogId = `${extensionKey}_toast_log`;
+    const diagnosticLogId = `${extensionKey}_diagnostic_log`;
     const retryCounterClass = 'empty-reply-regenerator-retry-counter';
     const metadataTextPattern = /字数\s*\S+[\s|｜]*更新于/;
     const maxToastLogEntries = 3;
+    const maxDiagnosticLogEntries = 8;
     const toastRetryCheckDelays = Object.freeze([700, 1800]);
     const foregroundRetryCheckDelays = Object.freeze([300, 1500, 4000]);
     const noNewReplyRetryMinDelay = 1500;
@@ -62,6 +64,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let generationRequestSubmitted = false;
     let generationRequestId = 0;
     let toastLogEntries = [];
+    let diagnosticLogEntries = [];
     let toastContainerObserver = null;
     let toastBodyObserver = null;
     let observedToastContainer = null;
@@ -158,6 +161,17 @@ import { is_group_generating } from '/scripts/group-chats.js';
             : '';
     }
 
+    function renderDiagnosticLog() {
+        const log = document.getElementById(diagnosticLogId);
+        if (!log) {
+            return;
+        }
+
+        log.textContent = diagnosticLogEntries.length > 0
+            ? `诊断记录：\n${diagnosticLogEntries.map(entry => `${entry.time} ${entry.text}`).join('\n')}`
+            : '';
+    }
+
     function padTimePart(value) {
         return String(value).padStart(2, '0');
     }
@@ -173,6 +187,23 @@ import { is_group_generating } from '/scripts/group-chats.js';
     function shortenStatusText(text, limit = 80) {
         const normalized = normalizeToastText(text);
         return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+    }
+
+    function formatDiagnosticDetails(details) {
+        return Object.entries(details)
+            .filter(([, value]) => value !== undefined && value !== null && value !== '')
+            .map(([key, value]) => `${key}=${String(value)}`)
+            .join('；');
+    }
+
+    function recordDiagnostic(action, details = {}) {
+        const detailText = formatDiagnosticDetails(details);
+        diagnosticLogEntries.unshift({
+            time: formatLogTime(),
+            text: detailText ? `${action}：${detailText}` : action,
+        });
+        diagnosticLogEntries = diagnosticLogEntries.slice(0, maxDiagnosticLogEntries);
+        renderDiagnosticLog();
     }
 
     function getToastKind(element) {
@@ -200,7 +231,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     }
 
     function getReplyText(message) {
-        // 空回只按聊天数据里的原始正文判断；不要读 DOM，也不要读正则处理后的显示结果。
+        // 空回的主判断只看原始正文；DOM 只作为“已有可见正文时禁止重试”的额外保护。
         const text = String(message?.mes ?? '').replace(blankCharacters, '').trim();
         return text === '...' ? '' : text;
     }
@@ -236,6 +267,22 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return !!message && !message.is_user && !message.is_system;
     }
 
+    function getMessageRole(message) {
+        if (!message) {
+            return 'none';
+        }
+
+        if (message.is_user) {
+            return 'user';
+        }
+
+        if (message.is_system) {
+            return 'system';
+        }
+
+        return 'ai';
+    }
+
     function isCurrentGenerationMessage(messageIndex) {
         return generationRequestSubmitted
             && Number.isInteger(messageIndex)
@@ -259,9 +306,75 @@ import { is_group_generating } from '/scripts/group-chats.js';
             .filter(isAiReply);
     }
 
-    function hasCurrentGenerationReplyText() {
-        return getCurrentGenerationAiMessages()
-            .some(message => getReplyText(message).length > 0);
+    function getReplyTextFromMessageElement(messageIndex) {
+        const messageElement = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
+        const text = String(messageElement?.querySelector('.mes_text')?.textContent ?? '')
+            .replace(blankCharacters, '')
+            .trim();
+        return text === '...' ? '' : text;
+    }
+
+    function isLastAiEmptyReply() {
+        const messageIndex = chat.length - 1;
+        const lastMessage = chat[messageIndex];
+        return isAiReply(lastMessage)
+            && getReplyText(lastMessage).length === 0
+            && getReplyTextFromMessageElement(messageIndex).length === 0;
+    }
+
+    function getExistingReplyTextGuardReason() {
+        const currentGenerationMessage = getCurrentGenerationAiMessages()
+            .find(message => getReplyText(message).length > 0);
+        if (currentGenerationMessage) {
+            return `本轮 AI 楼已有正文 ${getReplyText(currentGenerationMessage).length} 字`;
+        }
+
+        const lastIndex = chat.length - 1;
+        const lastMessage = chat[lastIndex];
+        const lastReplyLength = getReplyText(lastMessage).length;
+        if (isAiReply(lastMessage) && lastReplyLength > 0) {
+            return `最后 AI 楼原始正文 ${lastReplyLength} 字`;
+        }
+
+        const lastVisibleReplyLength = getReplyTextFromMessageElement(lastIndex).length;
+        if (isAiReply(lastMessage) && lastVisibleReplyLength > 0) {
+            return `最后 AI 楼页面正文 ${lastVisibleReplyLength} 字`;
+        }
+
+        return '';
+    }
+
+    function hasExistingReplyTextGuard() {
+        return getExistingReplyTextGuardReason() !== '';
+    }
+
+    function getDiagnosticSnapshot(extra = {}) {
+        const lastIndex = chat.length - 1;
+        const lastMessage = chat[lastIndex];
+        const currentAiLengths = getCurrentGenerationAiMessages()
+            .map(message => getReplyText(message).length)
+            .join(',');
+
+        return {
+            ...extra,
+            req: generationRequestSubmitted ? generationRequestId : `${generationRequestId}/idle`,
+            type: activeGenerationType ?? 'none',
+            startType: generationStartType ?? 'none',
+            retry: retryCount,
+            chat: `${chat.length}/${generationStartChatLength}`,
+            last: `${lastIndex}:${getMessageRole(lastMessage)}:${getReplyText(lastMessage).length}`,
+            lastDom: getReplyTextFromMessageElement(lastIndex).length,
+            currentAi: currentAiLengths || 'none',
+        };
+    }
+
+    function isStaleGenerationCheck(expectedGenerationRequestId) {
+        if (!Number.isInteger(expectedGenerationRequestId) || expectedGenerationRequestId <= 0) {
+            return generationRequestSubmitted;
+        }
+
+        return Number.isInteger(expectedGenerationRequestId)
+            && expectedGenerationRequestId !== generationRequestId;
     }
 
     function isNoGeneratedReplyBaseCandidate() {
@@ -274,11 +387,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         const lastMessage = chat[chat.length - 1];
-        if (generationStartLastMessageWasUser && lastMessage?.is_user) {
-            return true;
-        }
-
-        return generationStartType === 'regenerate' && isAiReply(lastMessage);
+        return (generationStartLastMessageWasUser && lastMessage?.is_user)
+            || (generationStartType === 'regenerate' && isLastAiEmptyReply());
     }
 
     function getNoGeneratedReplyRetryDelay() {
@@ -295,7 +405,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     }
 
     function getEmptyReplyCandidate(messageIndex, message) {
-        if (hasCurrentGenerationReplyText()) {
+        if (hasExistingReplyTextGuard()) {
             return null;
         }
 
@@ -347,6 +457,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationCheckpointAt = Date.now();
     }
 
+    function getGenerationCheckRequestId() {
+        return generationRequestSubmitted ? generationRequestId : 0;
+    }
+
     function markToastFailureCheckpointIfNeeded() {
         if (generationRequestSubmitted || generationStopped || activeGenerationType === null || !shouldCheckGenerationType()) {
             return;
@@ -378,8 +492,9 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         clearToastRetryChecks();
+        const expectedGenerationRequestId = getGenerationCheckRequestId();
         toastRetryCheckTimers = toastRetryCheckDelays.map(delay => setTimeout(() => {
-            scheduleEmptyReplyCheck('toast_error');
+            scheduleEmptyReplyCheck('toast_error', expectedGenerationRequestId);
         }, delay));
     }
 
@@ -407,7 +522,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         renderToastLog();
         handleImageAssistToast(kind, text);
         markToastFailureCheckpointIfNeeded();
-        scheduleImmediateEmptyReplyCheck('toast_error');
+        scheduleImmediateEmptyReplyCheck('toast_error', getGenerationCheckRequestId());
         scheduleToastRetryChecks();
     }
 
@@ -479,9 +594,10 @@ import { is_group_generating } from '/scripts/group-chats.js';
         initToastObserver();
 
         if (shouldRunForegroundEmptyReplyCheck()) {
+            const expectedGenerationRequestId = getGenerationCheckRequestId();
             clearForegroundRetryChecks();
             foregroundRetryCheckTimers = foregroundRetryCheckDelays.map(delay => setTimeout(() => {
-                scheduleEmptyReplyCheck(reason);
+                scheduleEmptyReplyCheck(reason, expectedGenerationRequestId);
             }, delay));
         }
 
@@ -509,14 +625,14 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return Math.max(0, retryRequestTimestamps[0] + 60000 - now);
     }
 
-    function scheduleRpmResume(delay) {
+    function scheduleRpmResume(delay, expectedGenerationRequestId) {
         if (rpmResumeTimer) {
             clearTimeout(rpmResumeTimer);
         }
 
         rpmResumeTimer = setTimeout(() => {
             rpmResumeTimer = null;
-            scheduleEmptyReplyCheck('rpm_limit_released');
+            scheduleEmptyReplyCheck('rpm_limit_released', expectedGenerationRequestId);
         }, delay + 100);
     }
 
@@ -949,63 +1065,87 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return true;
     }
 
-    function scheduleEmptyReplyCheck(reason) {
+    function scheduleEmptyReplyCheck(reason, expectedGenerationRequestId = getGenerationCheckRequestId()) {
         if (scheduledCheck) {
             clearTimeout(scheduledCheck);
         }
 
         scheduledCheck = setTimeout(() => {
             scheduledCheck = null;
-            void checkForEmptyReply(reason);
+            void checkForEmptyReply(reason, expectedGenerationRequestId);
         }, 300);
     }
 
-    function scheduleDelayedEmptyReplyCheck(reason, delay) {
+    function scheduleDelayedEmptyReplyCheck(reason, delay, expectedGenerationRequestId = getGenerationCheckRequestId()) {
         if (scheduledCheck) {
             clearTimeout(scheduledCheck);
         }
 
         scheduledCheck = setTimeout(() => {
             scheduledCheck = null;
-            void checkForEmptyReply(reason);
+            void checkForEmptyReply(reason, expectedGenerationRequestId);
         }, Math.max(0, delay));
     }
 
-    function scheduleImmediateEmptyReplyCheck(reason) {
-        Promise.resolve().then(() => checkForEmptyReply(reason));
+    function scheduleImmediateEmptyReplyCheck(reason, expectedGenerationRequestId = getGenerationCheckRequestId()) {
+        Promise.resolve().then(() => checkForEmptyReply(reason, expectedGenerationRequestId));
     }
 
-    async function checkForEmptyReply(reason) {
+    async function checkForEmptyReply(reason, expectedGenerationRequestId = getGenerationCheckRequestId()) {
         const settings = getSettings();
         if (!settings.enabled) {
             setLastStatus('插件已关闭');
+            recordDiagnostic('跳过检查', { reason, why: '插件关闭' });
+            return;
+        }
+
+        if (isStaleGenerationCheck(expectedGenerationRequestId)) {
+            recordDiagnostic('跳过旧检查', getDiagnosticSnapshot({ reason, expected: expectedGenerationRequestId, actual: generationRequestId }));
             return;
         }
 
         if (generationStopped) {
             setLastStatus('本轮已手动停止，未重试');
+            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '手动停止' }));
             return;
         }
 
         if (isGenerationStillActive()) {
             setLastStatus('生成仍在进行，等待结束后检查');
+            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '仍在生成' }));
             return;
         }
 
         if (!shouldCheckGenerationType()) {
             setLastStatus('本次生成类型不处理，未重试');
+            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '类型不处理' }));
             clearGenerationCheckpoint();
             return;
         }
 
         if (!hasTrackedTextGeneration()) {
+            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '未跟踪到文本生成' }));
+            return;
+        }
+
+        const guardReason = getExistingReplyTextGuardReason();
+        if (guardReason) {
+            const messageIndex = chat.length - 1;
+            const lastMessage = chat[messageIndex];
+            const recorded = await recordRetryCountOnFinalReply(messageIndex, lastMessage);
+            if (!recorded) {
+                setLastStatus(`检测到已有正文（${guardReason}），未重试`);
+                clearGenerationCheckpoint();
+            }
+            recordDiagnostic('硬保护跳过重试', getDiagnosticSnapshot({ reason, why: guardReason }));
             return;
         }
 
         const noGeneratedReplyRetryDelay = getNoGeneratedReplyRetryDelay();
         if (noGeneratedReplyRetryDelay > 0) {
             setLastStatus(`本轮暂未产生新 AI 回复，等待 ${formatDelay(noGeneratedReplyRetryDelay)} 后确认是否需要重试`);
-            scheduleDelayedEmptyReplyCheck('no_ai_reply_confirm', noGeneratedReplyRetryDelay + 50);
+            recordDiagnostic('延后检查', getDiagnosticSnapshot({ reason, delay: formatDelay(noGeneratedReplyRetryDelay) }));
+            scheduleDelayedEmptyReplyCheck('no_ai_reply_confirm', noGeneratedReplyRetryDelay + 50, expectedGenerationRequestId);
             return;
         }
 
@@ -1018,14 +1158,19 @@ import { is_group_generating } from '/scripts/group-chats.js';
             if (!recorded) {
                 if (isCompletedAiReply(lastMessage)) {
                     setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
+                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '最后 AI 楼正文非空' }));
                     clearGenerationCheckpoint();
-                } else if (hasCurrentGenerationReplyText()) {
-                    setLastStatus('本轮已有原始正文内容，未重试');
+                } else if (getExistingReplyTextGuardReason()) {
+                    const lateGuardReason = getExistingReplyTextGuardReason();
+                    setLastStatus(`本轮已有正文（${lateGuardReason}），未重试`);
+                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: lateGuardReason }));
                     clearGenerationCheckpoint();
                 } else if (lastMessage?.is_user) {
                     setLastStatus('最后一楼仍是用户消息，未重试');
+                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '最后一楼是用户消息' }));
                 } else {
                     setLastStatus('最后一楼不是已完成 AI 回复，未重试');
+                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '没有候选' }));
                 }
             }
             return;
@@ -1034,6 +1179,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         const messageKey = emptyCandidate.key;
         if (messageKey === lastHandledEmptyKey) {
             setLastStatus(`${emptyCandidate.label}，已处理过，等待下一轮生成`);
+            recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '候选已处理', candidate: emptyCandidate.label }));
             return;
         }
 
@@ -1041,6 +1187,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
             lastHandledEmptyKey = messageKey;
             setStatus(`检测到空回，但已达到重试上限（${settings.maxRetries}）`);
             setLastStatus(`${emptyCandidate.label}，但已达到重试上限（${settings.maxRetries}）`);
+            recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '达到重试上限', candidate: emptyCandidate.label }));
             return;
         }
 
@@ -1048,7 +1195,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         if (resumeDelay > 0) {
             setStatus(`检测到空回；已达到每分钟自动重试上限，约 ${formatDelay(resumeDelay)} 后继续`);
             setLastStatus(`${emptyCandidate.label}；已达到每分钟自动重试上限，约 ${formatDelay(resumeDelay)} 后继续`);
-            scheduleRpmResume(resumeDelay);
+            recordDiagnostic('延后重试', getDiagnosticSnapshot({ reason, why: 'RPM 限制', candidate: emptyCandidate.label, delay: formatDelay(resumeDelay) }));
+            scheduleRpmResume(resumeDelay, expectedGenerationRequestId);
             return;
         }
 
@@ -1056,14 +1204,30 @@ import { is_group_generating } from '/scripts/group-chats.js';
         lastHandledEmptyKey = messageKey;
         setStatus(`检测到空回，正在重新生成 ${retryCount}/${settings.maxRetries}`);
         setLastStatus(`${emptyCandidate.label}，正在重新生成 ${retryCount}/${settings.maxRetries}`);
-        triggerRegenerate(reason);
+        recordDiagnostic('准备自动重试', getDiagnosticSnapshot({ reason, candidate: emptyCandidate.label }));
+        triggerRegenerate(reason, expectedGenerationRequestId);
     }
 
-    function triggerRegenerate(reason) {
+    function triggerRegenerate(reason, expectedGenerationRequestId = getGenerationCheckRequestId()) {
+        if (isStaleGenerationCheck(expectedGenerationRequestId)) {
+            recordDiagnostic('取消旧自动重试', getDiagnosticSnapshot({ reason, expected: expectedGenerationRequestId, actual: generationRequestId }));
+            return;
+        }
+
+        const guardReason = getExistingReplyTextGuardReason();
+        if (guardReason) {
+            setStatus('');
+            setLastStatus(`触发前发现已有正文（${guardReason}），已取消自动重试`);
+            recordDiagnostic('取消自动重试', getDiagnosticSnapshot({ reason, why: guardReason }));
+            clearGenerationCheckpoint();
+            return;
+        }
+
         const regenerateButton = document.getElementById('option_regenerate');
         if (!regenerateButton) {
             setStatus('未找到重新生成按钮');
             setLastStatus('检测到空回，但未找到重新生成按钮');
+            recordDiagnostic('重试失败', getDiagnosticSnapshot({ reason, why: '未找到重新生成按钮' }));
             return;
         }
 
@@ -1081,6 +1245,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         console.info(`[${extensionKey}] Empty reply after ${reason}; triggering regenerate.`);
         retryRequestTimestamps.push(Date.now());
         pruneRetryRequestTimestamps();
+        recordDiagnostic('点击重新生成', getDiagnosticSnapshot({ reason }));
         regenerateButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
 
@@ -1097,7 +1262,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartedAt = 0;
         generationCheckpointAt = 0;
         generationRequestSubmitted = false;
-        generationRequestId = 0;
 
         if (pendingAutoRetryTimer) {
             clearTimeout(pendingAutoRetryTimer);
@@ -1138,7 +1302,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         retryCount = 0;
-        generationRequestId = 0;
         lastHandledEmptyKey = '';
         setStatus('');
         setLastStatus('');
@@ -1150,6 +1313,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         markGenerationCheckpointFromCurrentChat();
+        recordDiagnostic('生成提交', getDiagnosticSnapshot({ reason: 'generate_after_data' }));
         setLastStatus('文本生成已提交，等待结束后检查');
     }
 
@@ -1201,6 +1365,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
                             <div id="${lastStatusId}" class="empty-reply-regenerator-last-status"></div>
                             <div id="${imageStatusId}" class="empty-reply-regenerator-image-status"></div>
                             <div id="${toastLogId}" class="empty-reply-regenerator-toast-log"></div>
+                            <div id="${diagnosticLogId}" class="empty-reply-regenerator-diagnostic-log"></div>
                         </div>
                     </div>
                 </div>
@@ -1221,6 +1386,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         setLastStatus('');
         setImageStatus('');
         renderToastLog();
+        renderDiagnosticLog();
 
         enabledInput.addEventListener('change', () => {
             const currentSettings = getSettings();
@@ -1285,16 +1451,16 @@ import { is_group_generating } from '/scripts/group-chats.js';
             setLastStatus('本轮已手动停止，未重试');
         });
         eventSource.on(event_types.GENERATION_ENDED, () => {
-            scheduleEmptyReplyCheck('generation_ended');
+            scheduleEmptyReplyCheck('generation_ended', getGenerationCheckRequestId());
         });
         eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId, type) => {
             if (type) {
                 activeGenerationType = type;
             }
             renderRetryCounter(Number(messageId));
-            scheduleEmptyReplyCheck('character_message_rendered');
+            scheduleEmptyReplyCheck('character_message_rendered', getGenerationCheckRequestId());
         });
-        eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => scheduleEmptyReplyCheck('group_wrapper_finished'));
+        eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => scheduleEmptyReplyCheck('group_wrapper_finished', getGenerationCheckRequestId()));
         eventSource.on(event_types.CHAT_CHANGED, () => {
             resetRetrySession();
             clearImageAssistSession();

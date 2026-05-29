@@ -18,7 +18,8 @@
 #empty_reply_regenerator_settings .empty-reply-regenerator-status,
 #empty_reply_regenerator_settings .empty-reply-regenerator-last-status,
 #empty_reply_regenerator_settings .empty-reply-regenerator-image-status,
-#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log,
+#empty_reply_regenerator_settings .empty-reply-regenerator-diagnostic-log {
     font-size: inherit;
     line-height: 1.4;
 }
@@ -73,20 +74,23 @@
 
 #empty_reply_regenerator_settings .empty-reply-regenerator-last-status,
 #empty_reply_regenerator_settings .empty-reply-regenerator-image-status,
-#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log,
+#empty_reply_regenerator_settings .empty-reply-regenerator-diagnostic-log {
     opacity: 0.75;
     margin-top: 0;
     overflow-wrap: anywhere;
 }
 
-#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log {
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log,
+#empty_reply_regenerator_settings .empty-reply-regenerator-diagnostic-log {
     white-space: pre-wrap;
 }
 
 #empty_reply_regenerator_settings .empty-reply-regenerator-status:empty,
 #empty_reply_regenerator_settings .empty-reply-regenerator-last-status:empty,
 #empty_reply_regenerator_settings .empty-reply-regenerator-image-status:empty,
-#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log:empty {
+#empty_reply_regenerator_settings .empty-reply-regenerator-toast-log:empty,
+#empty_reply_regenerator_settings .empty-reply-regenerator-diagnostic-log:empty {
     display: none;
 }
 
