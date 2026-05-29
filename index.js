@@ -3,7 +3,6 @@ import {
     eventSource,
     event_types,
     is_send_press,
-    saveChatConditional,
     saveSettingsDebounced,
 } from '/script.js';
 import { extension_settings } from '/scripts/extensions.js';
@@ -13,7 +12,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
     'use strict';
 
     const extensionKey = 'empty_reply_regenerator';
-    const retryCountExtraKey = 'empty_reply_regenerator_retry_count';
     const settingsPanelId = `${extensionKey}_settings`;
     const enabledInputId = `${extensionKey}_enabled`;
     const maxRetriesInputId = `${extensionKey}_max_retries`;
@@ -25,8 +23,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
     const imageStatusId = `${extensionKey}_image_status`;
     const toastLogId = `${extensionKey}_toast_log`;
     const diagnosticLogId = `${extensionKey}_diagnostic_log`;
-    const retryCounterClass = 'empty-reply-regenerator-retry-counter';
-    const metadataTextPattern = /字数\s*\S+[\s|｜]*更新于/;
     const maxToastLogEntries = 3;
     const maxDiagnosticLogEntries = 8;
     const toastRetryCheckDelays = Object.freeze([700, 1800]);
@@ -640,11 +636,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return `${Math.max(1, Math.ceil(milliseconds / 1000))} 秒`;
     }
 
-    function getStoredRetryCount(message) {
-        const count = Number(message?.extra?.[retryCountExtraKey] ?? 0);
-        return Number.isInteger(count) && count > 0 ? count : 0;
-    }
-
     function isVisibleElement(element) {
         if (!element) {
             return false;
@@ -917,148 +908,12 @@ import { is_group_generating } from '/scripts/group-chats.js';
         scheduleImageAssistRetryCheck();
     }
 
-    function isInsideMessageBodyOrControls(element) {
-        const unsafeSelector = '.mes_text, .mes_reasoning, .mes_buttons, .extraMesButtons, .mes_edit_buttons, .mesAvatarWrapper, .del_checkbox, .for_checkbox';
-        return !!element.closest(unsafeSelector) || !!element.querySelector(unsafeSelector);
-    }
-
-    function getElementDepth(element, root) {
-        let depth = 0;
-        let current = element;
-
-        while (current && current !== root) {
-            depth += 1;
-            current = current.parentElement;
-        }
-
-        return depth;
-    }
-
-    function getAssistantMetadataElement(messageElement) {
-        const candidates = Array.from(messageElement.querySelectorAll('span, small, div, p'))
-            .filter(element => !element.classList.contains(retryCounterClass))
-            .filter(element => !isInsideMessageBodyOrControls(element))
-            .filter(isVisibleElement)
-            .map(element => ({
-                element,
-                text: element.textContent.replace(/\s+/g, ' ').trim(),
-            }))
-            .filter(candidate => candidate.text.length <= 100 && metadataTextPattern.test(candidate.text));
-
-        candidates.sort((left, right) => {
-            const lengthDifference = left.text.length - right.text.length;
-            if (lengthDifference !== 0) {
-                return lengthDifference;
-            }
-
-            return getElementDepth(right.element, messageElement) - getElementDepth(left.element, messageElement);
-        });
-
-        return candidates[0]?.element ?? null;
-    }
-
-    function getAvatarMetadataTarget(messageElement) {
-        const avatarContainer = messageElement.querySelector('.mesAvatarWrapper');
-        const timer = avatarContainer?.querySelector('.mes_timer');
-
-        if (!isVisibleElement(avatarContainer) || !isVisibleElement(timer)) {
-            return null;
-        }
-
-        return {
-            container: timer,
-            anchor: null,
-            locationClass: 'empty-reply-regenerator-retry-counter--avatar-meta',
-            getText: count => ` | 重试 ${count} 次`,
-        };
-    }
-
-    function getRetryCounterTarget(messageElement) {
-        const avatarMetadataTarget = getAvatarMetadataTarget(messageElement);
-        if (avatarMetadataTarget) {
-            return avatarMetadataTarget;
-        }
-
-        const assistantMetadataElement = getAssistantMetadataElement(messageElement);
-        if (assistantMetadataElement) {
-            return {
-                container: assistantMetadataElement,
-                anchor: assistantMetadataElement.lastElementChild,
-                locationClass: 'empty-reply-regenerator-retry-counter--assistant-meta',
-                getText: count => ` | 重试 ${count} 次`,
-            };
-        }
-
-        return null;
-    }
-
-    function renderRetryCounter(messageIndex) {
-        const message = chat[messageIndex];
-        const messageElement = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
-        const target = messageElement ? getRetryCounterTarget(messageElement) : null;
-
-        if (!messageElement) {
-            return;
-        }
-
-        let counter = null;
-        const count = getStoredRetryCount(message);
-
-        if (!count || !target) {
-            messageElement.querySelectorAll(`.${retryCounterClass}`).forEach(element => element.remove());
-            return;
-        }
-
-        const staleCounters = Array.from(messageElement.querySelectorAll(`.${retryCounterClass}`));
-        staleCounters.forEach(element => {
-            if (element.parentElement !== target.container) {
-                element.remove();
-            }
-        });
-        counter = messageElement.querySelector(`.${retryCounterClass}`);
-
-        if (counter?.parentElement !== target.container) {
-            counter?.remove();
-            counter = null;
-        }
-
-        if (!counter) {
-            counter = document.createElement('span');
-
-            if (target.anchor) {
-                target.anchor.insertAdjacentElement('afterend', counter);
-            } else {
-                target.container.append(counter);
-            }
-        }
-
-        counter.className = `${retryCounterClass} ${target.locationClass}`;
-        counter.textContent = target.getText(count);
-        counter.title = `本楼由空回自动重试 ${count} 次生成`;
-    }
-
-    function renderAllRetryCounters() {
-        document.querySelectorAll('#chat .mes[mesid]').forEach(element => {
-            const messageIndex = Number(element.getAttribute('mesid'));
-            if (Number.isInteger(messageIndex)) {
-                renderRetryCounter(messageIndex);
-            }
-        });
-    }
-
     async function recordRetryCountOnFinalReply(messageIndex, message) {
         if (retryCount <= 0 || !isCompletedAiReply(message) || getReplyText(message).length === 0) {
             return false;
         }
 
         const finishedRetryCount = retryCount;
-        if (!message.extra || typeof message.extra !== 'object') {
-            message.extra = {};
-        }
-
-        message.extra[retryCountExtraKey] = finishedRetryCount;
-        renderRetryCounter(messageIndex);
-        await saveChatConditional();
         resetRetrySession();
         setStatus('');
         setLastStatus(`${formatMessageIndex(messageIndex)}重试 ${finishedRetryCount} 次后成功`);
@@ -1095,7 +950,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         const settings = getSettings();
         if (!settings.enabled) {
             setLastStatus('插件已关闭');
-            recordDiagnostic('跳过检查', { reason, why: '插件关闭' });
             return;
         }
 
@@ -1106,25 +960,21 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
         if (generationStopped) {
             setLastStatus('本轮已手动停止，未重试');
-            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '手动停止' }));
             return;
         }
 
         if (isGenerationStillActive()) {
             setLastStatus('生成仍在进行，等待结束后检查');
-            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '仍在生成' }));
             return;
         }
 
         if (!shouldCheckGenerationType()) {
             setLastStatus('本次生成类型不处理，未重试');
-            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '类型不处理' }));
             clearGenerationCheckpoint();
             return;
         }
 
         if (!hasTrackedTextGeneration()) {
-            recordDiagnostic('跳过检查', getDiagnosticSnapshot({ reason, why: '未跟踪到文本生成' }));
             return;
         }
 
@@ -1137,7 +987,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
                 setLastStatus(`检测到已有正文（${guardReason}），未重试`);
                 clearGenerationCheckpoint();
             }
-            recordDiagnostic('硬保护跳过重试', getDiagnosticSnapshot({ reason, why: guardReason }));
             return;
         }
 
@@ -1158,19 +1007,15 @@ import { is_group_generating } from '/scripts/group-chats.js';
             if (!recorded) {
                 if (isCompletedAiReply(lastMessage)) {
                     setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
-                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '最后 AI 楼正文非空' }));
                     clearGenerationCheckpoint();
                 } else if (getExistingReplyTextGuardReason()) {
                     const lateGuardReason = getExistingReplyTextGuardReason();
                     setLastStatus(`本轮已有正文（${lateGuardReason}），未重试`);
-                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: lateGuardReason }));
                     clearGenerationCheckpoint();
                 } else if (lastMessage?.is_user) {
                     setLastStatus('最后一楼仍是用户消息，未重试');
-                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '最后一楼是用户消息' }));
                 } else {
                     setLastStatus('最后一楼不是已完成 AI 回复，未重试');
-                    recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '没有候选' }));
                 }
             }
             return;
@@ -1179,7 +1024,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         const messageKey = emptyCandidate.key;
         if (messageKey === lastHandledEmptyKey) {
             setLastStatus(`${emptyCandidate.label}，已处理过，等待下一轮生成`);
-            recordDiagnostic('跳过重试', getDiagnosticSnapshot({ reason, why: '候选已处理', candidate: emptyCandidate.label }));
             return;
         }
 
@@ -1313,7 +1157,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         markGenerationCheckpointFromCurrentChat();
-        recordDiagnostic('生成提交', getDiagnosticSnapshot({ reason: 'generate_after_data' }));
         setLastStatus('文本生成已提交，等待结束后检查');
     }
 
@@ -1433,7 +1276,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         getSettings();
         injectSettingsPanel();
         initToastObserver();
-        renderAllRetryCounters();
         document.addEventListener('click', handleImageAssistUserClick, true);
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
@@ -1457,7 +1299,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
             if (type) {
                 activeGenerationType = type;
             }
-            renderRetryCounter(Number(messageId));
             scheduleEmptyReplyCheck('character_message_rendered', getGenerationCheckRequestId());
         });
         eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => scheduleEmptyReplyCheck('group_wrapper_finished', getGenerationCheckRequestId()));
@@ -1465,9 +1306,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
             resetRetrySession();
             clearImageAssistSession();
             setImageStatus('');
-            setTimeout(renderAllRetryCounters, 300);
         });
-        eventSource.on(event_types.MORE_MESSAGES_LOADED, renderAllRetryCounters);
     }
 
     if (document.readyState === 'loading') {

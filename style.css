@@ -94,28 +94,3 @@
     display: none;
 }
 
-.empty-reply-regenerator-retry-counter {
-    cursor: default;
-    opacity: 0.85;
-    font-size: calc(var(--mainFontSize) * 0.9);
-    font-weight: 600;
-    white-space: nowrap;
-}
-
-.empty-reply-regenerator-retry-counter--assistant-meta {
-    display: inline;
-    font: inherit;
-    font-weight: inherit;
-    opacity: inherit;
-}
-
-.empty-reply-regenerator-retry-counter--avatar-meta {
-    display: inline-flex;
-    align-items: baseline;
-    margin-left: 3px;
-    margin-bottom: 5px;
-    font-size: calc(var(--mainFontSize) * 0.9);
-    font-weight: normal;
-    opacity: 1;
-}
-
