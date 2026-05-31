@@ -54,6 +54,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let generationStartChatLength = 0;
     let generationStartLastMessageKey = '';
     let generationStartLastMessageWasUser = false;
+    let generationStartPreviousMessageKey = '';
+    let generationStartPreviousMessageWasUser = false;
     let generationStartType = null;
     let generationStartedAt = 0;
     let generationCheckpointAt = 0;
@@ -398,7 +400,12 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         if (chat.length !== generationStartChatLength || getCurrentLastMessageKey() !== generationStartLastMessageKey) {
-            return false;
+            const lastMessage = chat[chat.length - 1];
+            return generationStartType === 'regenerate'
+                && generationStartPreviousMessageWasUser
+                && chat.length === generationStartChatLength - 1
+                && getCurrentLastMessageKey() === generationStartPreviousMessageKey
+                && !!lastMessage?.is_user;
         }
 
         const lastMessage = chat[chat.length - 1];
@@ -454,6 +461,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartChatLength = 0;
         generationStartLastMessageKey = '';
         generationStartLastMessageWasUser = false;
+        generationStartPreviousMessageKey = '';
+        generationStartPreviousMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = 0;
         generationCheckpointAt = 0;
@@ -463,6 +472,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
     function markGenerationCheckpointFromCurrentChat() {
         const lastMessage = chat[chat.length - 1];
+        const previousMessage = chat[chat.length - 2];
         const isNewTrackedRequest = !generationRequestSubmitted;
 
         generationRequestSubmitted = true;
@@ -472,6 +482,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartChatLength = chat.length;
         generationStartLastMessageKey = getCurrentLastMessageKey();
         generationStartLastMessageWasUser = !!lastMessage?.is_user;
+        generationStartPreviousMessageKey = getMessageKey(chat.length - 2, previousMessage);
+        generationStartPreviousMessageWasUser = !!previousMessage?.is_user;
         generationStartType = activeGenerationType;
         generationCheckpointAt = Date.now();
     }
@@ -1128,6 +1140,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartChatLength = 0;
         generationStartLastMessageKey = '';
         generationStartLastMessageWasUser = false;
+        generationStartPreviousMessageKey = '';
+        generationStartPreviousMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = 0;
         generationCheckpointAt = 0;
@@ -1158,6 +1172,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartChatLength = 0;
         generationStartLastMessageKey = '';
         generationStartLastMessageWasUser = false;
+        generationStartPreviousMessageKey = '';
+        generationStartPreviousMessageWasUser = false;
         generationStartType = null;
         generationStartedAt = Date.now();
         generationCheckpointAt = 0;
