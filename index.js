@@ -125,14 +125,20 @@ import { is_group_generating } from '/scripts/group-chats.js';
     function setStatus(text) {
         const status = document.getElementById(statusId);
         if (status) {
-            status.textContent = text;
+            const nextText = text || '';
+            if (status.textContent !== nextText) {
+                status.textContent = nextText;
+            }
         }
     }
 
     function setLastStatus(text) {
         const status = document.getElementById(lastStatusId);
         if (status) {
-            status.textContent = text ? `最近检测：${text}` : '';
+            const nextText = text ? `最近检测：${text}` : '';
+            if (status.textContent !== nextText) {
+                status.textContent = nextText;
+            }
         }
     }
 
@@ -279,11 +285,23 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return 'ai';
     }
 
+    function getTrackedGenerationFirstMessageIndex() {
+        if (!generationRequestSubmitted || generationStartChatLength <= 0) {
+            return -1;
+        }
+
+        if (generationStartType === 'regenerate') {
+            return Math.max(0, generationStartChatLength - 1);
+        }
+
+        return generationStartChatLength;
+    }
+
     function isCurrentGenerationMessage(messageIndex) {
-        return generationRequestSubmitted
-            && Number.isInteger(messageIndex)
-            && generationStartChatLength > 0
-            && messageIndex >= generationStartChatLength;
+        const firstMessageIndex = getTrackedGenerationFirstMessageIndex();
+        return Number.isInteger(messageIndex)
+            && firstMessageIndex >= 0
+            && messageIndex >= firstMessageIndex;
     }
 
     function isEligibleEmptyReply(messageIndex, message) {
@@ -293,12 +311,13 @@ import { is_group_generating } from '/scripts/group-chats.js';
     }
 
     function getCurrentGenerationAiMessages() {
-        if (!generationRequestSubmitted || generationStartChatLength <= 0) {
+        const firstMessageIndex = getTrackedGenerationFirstMessageIndex();
+        if (firstMessageIndex < 0) {
             return [];
         }
 
         return chat
-            .slice(generationStartChatLength)
+            .slice(firstMessageIndex)
             .filter(isAiReply);
     }
 
@@ -444,8 +463,12 @@ import { is_group_generating } from '/scripts/group-chats.js';
 
     function markGenerationCheckpointFromCurrentChat() {
         const lastMessage = chat[chat.length - 1];
+        const isNewTrackedRequest = !generationRequestSubmitted;
+
         generationRequestSubmitted = true;
-        generationRequestId += 1;
+        if (isNewTrackedRequest) {
+            generationRequestId += 1;
+        }
         generationStartChatLength = chat.length;
         generationStartLastMessageKey = getCurrentLastMessageKey();
         generationStartLastMessageWasUser = !!lastMessage?.is_user;
@@ -964,7 +987,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
 
         if (isGenerationStillActive()) {
-            setLastStatus('生成仍在进行，等待结束后检查');
             return;
         }
 
@@ -1005,8 +1027,12 @@ import { is_group_generating } from '/scripts/group-chats.js';
         if (!emptyCandidate) {
             const recorded = await recordRetryCountOnFinalReply(messageIndex, lastMessage);
             if (!recorded) {
-                if (isCompletedAiReply(lastMessage)) {
+                if (isCompletedAiReply(lastMessage) && getReplyLength(lastMessage) > 0) {
                     setLastStatus(`${formatMessageIndex(messageIndex)}正文非空（${getReplyLength(lastMessage)} 字），未重试`);
+                    clearGenerationCheckpoint();
+                } else if (isCompletedAiReply(lastMessage)) {
+                    setLastStatus(`${formatMessageIndex(messageIndex)}正文为空，但不是本轮候选，未重试`);
+                    recordDiagnostic('空楼未处理', getDiagnosticSnapshot({ reason, why: '不是本轮候选' }));
                     clearGenerationCheckpoint();
                 } else if (getExistingReplyTextGuardReason()) {
                     const lateGuardReason = getExistingReplyTextGuardReason();
@@ -1151,12 +1177,27 @@ import { is_group_generating } from '/scripts/group-chats.js';
         setLastStatus('');
     }
 
+    function onGenerationAfterCommands(type, _params, dryRun) {
+        if (dryRun) {
+            return;
+        }
+
+        activeGenerationType = type || activeGenerationType || 'normal';
+        if (!shouldCheckGenerationType()) {
+            return;
+        }
+
+        markGenerationCheckpointFromCurrentChat();
+    }
+
     function onGenerateAfterData(_data, dryRun) {
         if (dryRun || !shouldCheckGenerationType()) {
             return;
         }
 
-        markGenerationCheckpointFromCurrentChat();
+        if (!generationRequestSubmitted) {
+            markGenerationCheckpointFromCurrentChat();
+        }
         setLastStatus('文本生成已提交，等待结束后检查');
     }
 
@@ -1286,6 +1327,9 @@ import { is_group_generating } from '/scripts/group-chats.js';
         window.addEventListener('pageshow', handleForegroundResume);
 
         eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
+        if (event_types.GENERATION_AFTER_COMMANDS) {
+            eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
+        }
         eventSource.on(event_types.GENERATE_AFTER_DATA, onGenerateAfterData);
         eventSource.on(event_types.GENERATION_STOPPED, () => {
             generationStopped = true;
