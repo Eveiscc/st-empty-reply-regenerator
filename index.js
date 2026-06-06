@@ -56,6 +56,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
     let generationStartLastMessageWasUser = false;
     let generationStartPreviousMessageKey = '';
     let generationStartPreviousMessageWasUser = false;
+    let generationAnchorUserMessageIndex = -1;
+    let generationAnchorUserMessageKey = '';
     let generationStartType = null;
     let generationStartedAt = 0;
     let generationCheckpointAt = 0;
@@ -259,6 +261,23 @@ import { is_group_generating } from '/scripts/group-chats.js';
         return getMessageKey(index, chat[index]);
     }
 
+    function getNearestUserMessageSnapshot() {
+        for (let index = chat.length - 1; index >= 0; index -= 1) {
+            const message = chat[index];
+            if (message?.is_user) {
+                return {
+                    index,
+                    key: getMessageKey(index, message),
+                };
+            }
+        }
+
+        return {
+            index: -1,
+            key: '',
+        };
+    }
+
     function formatMessageIndex(index) {
         return Number.isInteger(index) && index >= 0 ? `第 ${index} 楼` : '最后一楼';
     }
@@ -399,8 +418,15 @@ import { is_group_generating } from '/scripts/group-chats.js';
             return false;
         }
 
+        const lastIndex = chat.length - 1;
+        const lastMessage = chat[lastIndex];
+        if (lastMessage?.is_user
+            && lastIndex === generationAnchorUserMessageIndex
+            && getCurrentLastMessageKey() === generationAnchorUserMessageKey) {
+            return true;
+        }
+
         if (chat.length !== generationStartChatLength || getCurrentLastMessageKey() !== generationStartLastMessageKey) {
-            const lastMessage = chat[chat.length - 1];
             return generationStartType === 'regenerate'
                 && generationStartPreviousMessageWasUser
                 && chat.length === generationStartChatLength - 1
@@ -408,7 +434,6 @@ import { is_group_generating } from '/scripts/group-chats.js';
                 && !!lastMessage?.is_user;
         }
 
-        const lastMessage = chat[chat.length - 1];
         return (generationStartLastMessageWasUser && lastMessage?.is_user)
             || (generationStartType === 'regenerate' && isLastAiEmptyReply());
     }
@@ -463,6 +488,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartPreviousMessageKey = '';
         generationStartPreviousMessageWasUser = false;
+        generationAnchorUserMessageIndex = -1;
+        generationAnchorUserMessageKey = '';
         generationStartType = null;
         generationStartedAt = 0;
         generationCheckpointAt = 0;
@@ -473,6 +500,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
     function markGenerationCheckpointFromCurrentChat() {
         const lastMessage = chat[chat.length - 1];
         const previousMessage = chat[chat.length - 2];
+        const userSnapshot = getNearestUserMessageSnapshot();
         const isNewTrackedRequest = !generationRequestSubmitted;
 
         generationRequestSubmitted = true;
@@ -484,6 +512,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = !!lastMessage?.is_user;
         generationStartPreviousMessageKey = getMessageKey(chat.length - 2, previousMessage);
         generationStartPreviousMessageWasUser = !!previousMessage?.is_user;
+        generationAnchorUserMessageIndex = userSnapshot.index;
+        generationAnchorUserMessageKey = userSnapshot.key;
         generationStartType = activeGenerationType;
         generationCheckpointAt = Date.now();
     }
@@ -1142,6 +1172,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartPreviousMessageKey = '';
         generationStartPreviousMessageWasUser = false;
+        generationAnchorUserMessageIndex = -1;
+        generationAnchorUserMessageKey = '';
         generationStartType = null;
         generationStartedAt = 0;
         generationCheckpointAt = 0;
@@ -1174,6 +1206,8 @@ import { is_group_generating } from '/scripts/group-chats.js';
         generationStartLastMessageWasUser = false;
         generationStartPreviousMessageKey = '';
         generationStartPreviousMessageWasUser = false;
+        generationAnchorUserMessageIndex = -1;
+        generationAnchorUserMessageKey = '';
         generationStartType = null;
         generationStartedAt = Date.now();
         generationCheckpointAt = 0;
