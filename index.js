@@ -996,6 +996,13 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }, 300);
     }
 
+    function clearScheduledEmptyReplyCheck() {
+        if (scheduledCheck) {
+            clearTimeout(scheduledCheck);
+            scheduledCheck = null;
+        }
+    }
+
     function scheduleDelayedEmptyReplyCheck(reason, delay, expectedGenerationRequestId = getGenerationCheckRequestId()) {
         if (scheduledCheck) {
             clearTimeout(scheduledCheck);
@@ -1193,6 +1200,34 @@ import { is_group_generating } from '/scripts/group-chats.js';
         clearForegroundRetryChecks();
     }
 
+    function markManualGenerationStopped() {
+        generationStopped = true;
+        pendingAutoRetry = false;
+        setStatus('');
+        setLastStatus('本轮已手动停止，未重试');
+
+        if (pendingAutoRetryTimer) {
+            clearTimeout(pendingAutoRetryTimer);
+            pendingAutoRetryTimer = null;
+        }
+
+        if (rpmResumeTimer) {
+            clearTimeout(rpmResumeTimer);
+            rpmResumeTimer = null;
+        }
+
+        clearScheduledEmptyReplyCheck();
+        clearGenerationCheckpoint();
+        clearForegroundRetryChecks();
+    }
+
+    function handleStopButtonClick(event) {
+        const target = event.target;
+        if (target instanceof Element && target.closest('#mes_stop')) {
+            markManualGenerationStopped();
+        }
+    }
+
     function onGenerationStarted(type, _params, dryRun) {
         if (dryRun) {
             return;
@@ -1375,6 +1410,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         });
         window.addEventListener('focus', handleForegroundResume);
         window.addEventListener('pageshow', handleForegroundResume);
+        document.addEventListener('click', handleStopButtonClick, true);
 
         eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
         if (event_types.GENERATION_AFTER_COMMANDS) {
@@ -1382,9 +1418,7 @@ import { is_group_generating } from '/scripts/group-chats.js';
         }
         eventSource.on(event_types.GENERATE_AFTER_DATA, onGenerateAfterData);
         eventSource.on(event_types.GENERATION_STOPPED, () => {
-            generationStopped = true;
-            pendingAutoRetry = false;
-            setLastStatus('本轮已手动停止，未重试');
+            markManualGenerationStopped();
         });
         eventSource.on(event_types.GENERATION_ENDED, () => {
             scheduleEmptyReplyCheck('generation_ended', getGenerationCheckRequestId());
